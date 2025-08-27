@@ -48,6 +48,7 @@ MAX_SHARD_SIZE_BYTES=""
 TARGET_INSECURE=false
 DOCS_SIZE_PER_BULK=""
 MAX_CONNECTIONS=""
+INITIAL_LEASE_DURATION="PT30M"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -63,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --target-insecure) TARGET_INSECURE=true; shift 1;;
     --documents-size-per-bulk-request) DOCS_SIZE_PER_BULK="$2"; shift 2;;
     --max-connections) MAX_CONNECTIONS="$2"; shift 2;;
+    --initial-lease-duration) INITIAL_LEASE_DURATION="$2"; shift 2;;
     *) echo "Unknown arg: $1"; usage; exit 2;;
   esac
 done
@@ -113,12 +115,51 @@ fi
 if [[ "$TARGET_INSECURE" == true ]]; then
   ARGS+=( --target-insecure )
 fi
+# Set a longer initial lease by default (30 minutes) unless overridden
+ARGS+=( --initial-lease-duration "$INITIAL_LEASE_DURATION" )
 
 # Redacted echo
 SAFE_ARGS=("${ARGS[@]}")
 for i in "${!SAFE_ARGS[@]}"; do
   if [[ ${SAFE_ARGS[$i]} == "--target-password" ]]; then
     SAFE_ARGS[$((i+1))]="******"
+  fi
+done
+
+# Prepare Metadata Migration args
+META_ARGS=(
+  --snapshot-name "$SNAPSHOT_NAME"
+  --s3-local-dir "$S3_DIR"
+  --s3-repo-uri "$S3_REPO_URI"
+  --s3-region "$S3_REGION"
+  --target-host "$TARGET_HOST"
+  --source-version "$SOURCE_VERSION_SANITIZED"
+)
+if [[ -n "$TARGET_USERNAME" ]]; then
+  META_ARGS+=( --target-username "$TARGET_USERNAME" )
+fi
+if [[ -n "$TARGET_PASSWORD" ]]; then
+  META_ARGS+=( --target-password "$TARGET_PASSWORD" )
+fi
+if [[ "$TARGET_INSECURE" == true ]]; then
+  META_ARGS+=( --target-insecure )
+fi
+
+META_SAFE_ARGS=("${META_ARGS[@]}")
+for i in "${!META_SAFE_ARGS[@]}"; do
+  if [[ ${META_SAFE_ARGS[$i]} == "--target-password" ]]; then
+    META_SAFE_ARGS[$((i+1))]="******"
+  fi
+done
+echo "Running Metadata Migration with args: ${META_SAFE_ARGS[*]}"
+
+META_ARGS_ESCAPED=""
+for a in "${META_ARGS[@]}"; do
+  if [[ -z "$META_ARGS_ESCAPED" ]]; then
+    META_ARGS_ESCAPED="$(shell_escape "$a")"
+  else
+    META_ARGS_ESCAPED+=" "
+    META_ARGS_ESCAPED+="$(shell_escape "$a")"
   fi
 done
 echo "Running RFS (native) with args: ${SAFE_ARGS[*]}"
@@ -140,6 +181,9 @@ export GRADLE_USER_HOME="${HOME}/.gradle-opensearch-migrations"
 GRADLE_FLAGS=(--no-daemon --no-configuration-cache)
 
 ./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:build -x test
+
+# 1) Run Metadata Migration first (idempotent)
+./gradlew "${GRADLE_FLAGS[@]}" :MetadataMigration:run --args="$META_ARGS_ESCAPED"
 
 while true; do
   ./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:run --args="$ARGS_ESCAPED" || EXIT=$? || true
