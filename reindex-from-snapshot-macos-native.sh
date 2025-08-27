@@ -126,8 +126,9 @@ for i in "${!SAFE_ARGS[@]}"; do
   fi
 done
 
-# Prepare Metadata Migration args
+# Prepare Metadata Migration args (prepend the 'migrate' subcommand)
 META_ARGS=(
+  migrate
   --snapshot-name "$SNAPSHOT_NAME"
   --s3-local-dir "$S3_DIR"
   --s3-repo-uri "$S3_REPO_URI"
