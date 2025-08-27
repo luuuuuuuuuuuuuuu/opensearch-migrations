@@ -79,6 +79,9 @@ S3_DIR="${BASE_TMP}/s3_files"
 LUCENE_DIR="${BASE_TMP}/lucene"
 mkdir -p "$S3_DIR" "$LUCENE_DIR"
 
+# Sanitize source version to avoid shell/gradle splitting issues on spaces
+SOURCE_VERSION_SANITIZED="${SOURCE_VERSION// /_}"
+
 ARGS=(
   --snapshot-name "$SNAPSHOT_NAME"
   --s3-local-dir "$S3_DIR"
@@ -86,7 +89,7 @@ ARGS=(
   --s3-region "$S3_REGION"
   --lucene-dir "$LUCENE_DIR"
   --target-host "$TARGET_HOST"
-  --source-version "$SOURCE_VERSION"
+  --source-version "$SOURCE_VERSION_SANITIZED"
 )
 
 if [[ -n "$TARGET_USERNAME" ]]; then
@@ -120,6 +123,18 @@ for i in "${!SAFE_ARGS[@]}"; do
 done
 echo "Running RFS (native) with args: ${SAFE_ARGS[*]}"
 
+# Build escaped single-string for Gradle --args to preserve tokens
+shell_escape() { printf %q "$1"; }
+ARGS_ESCAPED=""
+for a in "${ARGS[@]}"; do
+  if [[ -z "$ARGS_ESCAPED" ]]; then
+    ARGS_ESCAPED="$(shell_escape "$a")"
+  else
+    ARGS_ESCAPED+=" "
+    ARGS_ESCAPED+="$(shell_escape "$a")"
+  fi
+done
+
 # Build then run repeatedly (avoid daemon/config cache to reduce lock issues)
 export GRADLE_USER_HOME="${HOME}/.gradle-opensearch-migrations"
 GRADLE_FLAGS=(--no-daemon --no-configuration-cache)
@@ -127,7 +142,7 @@ GRADLE_FLAGS=(--no-daemon --no-configuration-cache)
 ./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:build -x test
 
 while true; do
-  ./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:run --args="${ARGS[*]}" || EXIT=$? || true
+  ./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:run --args="$ARGS_ESCAPED" || EXIT=$? || true
   EXIT=${EXIT:-0}
   if [[ $EXIT -eq 0 ]]; then
     echo "Shard migrated; continuing..."
