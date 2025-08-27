@@ -120,11 +120,14 @@ for i in "${!SAFE_ARGS[@]}"; do
 done
 echo "Running RFS (native) with args: ${SAFE_ARGS[*]}"
 
-# Build then run repeatedly
-./gradlew :DocumentsFromSnapshotMigration:build -x test
+# Build then run repeatedly (avoid daemon/config cache to reduce lock issues)
+export GRADLE_USER_HOME="${HOME}/.gradle-opensearch-migrations"
+GRADLE_FLAGS=(--no-daemon --no-configuration-cache)
+
+./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:build -x test
 
 while true; do
-  ./gradlew :DocumentsFromSnapshotMigration:run --args="${ARGS[*]}" || EXIT=$? || true
+  ./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:run --args="${ARGS[*]}" || EXIT=$? || true
   EXIT=${EXIT:-0}
   if [[ $EXIT -eq 0 ]]; then
     echo "Shard migrated; continuing..."
