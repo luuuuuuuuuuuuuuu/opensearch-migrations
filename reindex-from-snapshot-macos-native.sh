@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+set +H
 
 # Native macOS runner for Reindex-from-Snapshot without Docker
 # - Uses Gradle wrapper to run the CLI main class
@@ -94,12 +95,7 @@ ARGS=(
   --source-version "$SOURCE_VERSION_SANITIZED"
 )
 
-if [[ -n "$TARGET_USERNAME" ]]; then
-  ARGS+=( --target-username "$TARGET_USERNAME" )
-fi
-if [[ -n "$TARGET_PASSWORD" ]]; then
-  ARGS+=( --target-password "$TARGET_PASSWORD" )
-fi
+# Do NOT pass credentials via CLI to avoid escaping issues; use env vars instead
 if [[ -n "$INDEX_ALLOWLIST" ]]; then
   ARGS+=( --index-allowlist "$INDEX_ALLOWLIST" )
 fi
@@ -136,12 +132,6 @@ META_ARGS=(
   --target-host "$TARGET_HOST"
   --source-version "$SOURCE_VERSION_SANITIZED"
 )
-if [[ -n "$TARGET_USERNAME" ]]; then
-  META_ARGS+=( --target-username "$TARGET_USERNAME" )
-fi
-if [[ -n "$TARGET_PASSWORD" ]]; then
-  META_ARGS+=( --target-password "$TARGET_PASSWORD" )
-fi
 if [[ "$TARGET_INSECURE" == true ]]; then
   META_ARGS+=( --target-insecure )
 fi
@@ -166,7 +156,7 @@ done
 echo "Running RFS (native) with args: ${SAFE_ARGS[*]}"
 
 # Build escaped single-string for Gradle --args to preserve tokens
-shell_escape() { printf %q "$1"; }
+shell_escape() { printf '%q' "$1"; }
 ARGS_ESCAPED=""
 for a in "${ARGS[@]}"; do
   if [[ -z "$ARGS_ESCAPED" ]]; then
@@ -180,6 +170,10 @@ done
 # Build then run repeatedly (avoid daemon/config cache to reduce lock issues)
 export GRADLE_USER_HOME="${HOME}/.gradle-opensearch-migrations"
 GRADLE_FLAGS=(--no-daemon --no-configuration-cache)
+
+# Export credentials for both tools if provided to this script
+if [[ -n "${TARGET_USERNAME}" ]]; then export TARGET_USERNAME="${TARGET_USERNAME}"; fi
+if [[ -n "${TARGET_PASSWORD}" ]]; then export TARGET_PASSWORD="${TARGET_PASSWORD}"; fi
 
 ./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:build -x test
 
