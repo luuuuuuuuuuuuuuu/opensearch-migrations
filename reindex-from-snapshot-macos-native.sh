@@ -98,6 +98,8 @@ SOURCE_VERSION_SANITIZED="${SOURCE_VERSION// /_}"
 # If no basic-auth provided, attempt to infer SigV4 service/region from target-host (AOS/AOSS)
 host_part=${TARGET_HOST#*://}
 host_part=${host_part%%/*}
+# Strip port if present (e.g., ":443") so region regex works
+host_part=${host_part%%:*}
 if [[ -z "$TARGET_AWS_SERVICE_SIGNING_NAME" ]]; then
   if [[ "$host_part" == *.es.amazonaws.com ]]; then
     TARGET_AWS_SERVICE_SIGNING_NAME="es"
