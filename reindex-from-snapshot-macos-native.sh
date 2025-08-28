@@ -226,6 +226,16 @@ export AWS_SDK_LOAD_CONFIG=1
 if [[ -n "${AWS_PROFILE:-}" ]]; then export AWS_PROFILE; fi
 if [[ -z "${AWS_REGION:-}" && -n "${S3_REGION}" ]]; then export AWS_REGION="${S3_REGION}"; fi
 
+# If using an SSO profile, proactively export temporary creds for the Java SDK via AWS CLI
+if [[ -n "${AWS_PROFILE:-}" && -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
+  if command -v aws >/dev/null 2>&1; then
+    CREDS_EXPORT=$(aws configure export-credentials --profile "${AWS_PROFILE}" --format env 2>/dev/null || true)
+    if [[ -n "${CREDS_EXPORT}" ]]; then
+      eval "${CREDS_EXPORT}"
+    fi
+  fi
+fi
+
 ./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:build -x test
 
 # 1) Run Metadata Migration first (idempotent)
