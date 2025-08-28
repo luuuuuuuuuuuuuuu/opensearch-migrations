@@ -95,14 +95,20 @@ mkdir -p "$S3_DIR" "$LUCENE_DIR"
 # Sanitize source version to avoid shell/gradle splitting issues on spaces
 SOURCE_VERSION_SANITIZED="${SOURCE_VERSION// /_}"
 
-# If no basic-auth provided, attempt to infer SigV4 service/region from target-host (Amazon OpenSearch Service)
-if [[ -z "$TARGET_AWS_SERVICE_SIGNING_NAME" && "$TARGET_HOST" == *".es.amazonaws.com"* ]]; then
-  TARGET_AWS_SERVICE_SIGNING_NAME="es"
+# If no basic-auth provided, attempt to infer SigV4 service/region from target-host (AOS/AOSS)
+host_part=${TARGET_HOST#*://}
+host_part=${host_part%%/*}
+if [[ -z "$TARGET_AWS_SERVICE_SIGNING_NAME" ]]; then
+  if [[ "$host_part" == *.es.amazonaws.com ]]; then
+    TARGET_AWS_SERVICE_SIGNING_NAME="es"
+  elif [[ "$host_part" == *.aoss.amazonaws.com ]]; then
+    TARGET_AWS_SERVICE_SIGNING_NAME="aoss"
+  fi
 fi
-if [[ -z "$TARGET_AWS_REGION" && "$TARGET_HOST" == *".es.amazonaws.com"* ]]; then
-  host_part=${TARGET_HOST#*://}
-  host_part=${host_part%%/*}
-  if [[ "$host_part" =~ \.([a-z0-9-]+)\.es\.amazonaws\.com ]]; then
+if [[ -z "$TARGET_AWS_REGION" ]]; then
+  if [[ "$host_part" =~ \.([a-z0-9-]+)\.es\.amazonaws\.com$ ]]; then
+    TARGET_AWS_REGION="${BASH_REMATCH[1]}"
+  elif [[ "$host_part" =~ \.([a-z0-9-]+)\.aoss\.amazonaws\.com$ ]]; then
     TARGET_AWS_REGION="${BASH_REMATCH[1]}"
   fi
 fi
@@ -212,6 +218,11 @@ GRADLE_FLAGS=(--no-daemon --no-configuration-cache)
 # Export credentials for both tools if provided to this script
 if [[ -n "${TARGET_USERNAME}" ]]; then export TARGET_USERNAME="${TARGET_USERNAME}"; fi
 if [[ -n "${TARGET_PASSWORD}" ]]; then export TARGET_PASSWORD="${TARGET_PASSWORD}"; fi
+
+# Ensure Java AWS SDK honors shared config/SSO/role from local environment
+export AWS_SDK_LOAD_CONFIG=1
+if [[ -n "${AWS_PROFILE:-}" ]]; then export AWS_PROFILE; fi
+if [[ -z "${AWS_REGION:-}" && -n "${S3_REGION}" ]]; then export AWS_REGION="${S3_REGION}"; fi
 
 ./gradlew "${GRADLE_FLAGS[@]}" :DocumentsFromSnapshotMigration:build -x test
 
