@@ -3,6 +3,9 @@
 set -euo pipefail
 set +H
 
+# Util: escape a single shell argument safely for Gradle --args
+shell_escape() { printf '%q' "$1"; }
+
 # Native macOS runner for Reindex-from-Snapshot without Docker
 # - Uses Gradle wrapper to run the CLI main class
 # - Creates temp dirs under $HOME to avoid SIP-protected paths
@@ -22,7 +25,9 @@ Usage:
     [--max-shard-size-bytes 85899345920] \
     [--target-insecure] \
     [--documents-size-per-bulk-request 10485760] \
-    [--max-connections 10]
+    [--max-connections 10] \
+    [--initial-lease-duration PT30M] \
+    [--target-aws-region us-east-1 --target-aws-service-signing-name es]
 
 Requirements:
   - Java 17 available (Gradle will compile and run the app). You can install via SDKMAN or Homebrew.
@@ -50,6 +55,9 @@ TARGET_INSECURE=false
 DOCS_SIZE_PER_BULK=""
 MAX_CONNECTIONS=""
 INITIAL_LEASE_DURATION="PT30M"
+# Optional SigV4 auth for target (IAM role)
+TARGET_AWS_REGION=""
+TARGET_AWS_SERVICE_SIGNING_NAME=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -66,6 +74,8 @@ while [[ $# -gt 0 ]]; do
     --documents-size-per-bulk-request) DOCS_SIZE_PER_BULK="$2"; shift 2;;
     --max-connections) MAX_CONNECTIONS="$2"; shift 2;;
     --initial-lease-duration) INITIAL_LEASE_DURATION="$2"; shift 2;;
+    --target-aws-region) TARGET_AWS_REGION="$2"; shift 2;;
+    --target-aws-service-signing-name) TARGET_AWS_SERVICE_SIGNING_NAME="$2"; shift 2;;
     *) echo "Unknown arg: $1"; usage; exit 2;;
   esac
 done
@@ -84,6 +94,18 @@ mkdir -p "$S3_DIR" "$LUCENE_DIR"
 
 # Sanitize source version to avoid shell/gradle splitting issues on spaces
 SOURCE_VERSION_SANITIZED="${SOURCE_VERSION// /_}"
+
+# If no basic-auth provided, attempt to infer SigV4 service/region from target-host (Amazon OpenSearch Service)
+if [[ -z "$TARGET_AWS_SERVICE_SIGNING_NAME" && "$TARGET_HOST" == *".es.amazonaws.com"* ]]; then
+  TARGET_AWS_SERVICE_SIGNING_NAME="es"
+fi
+if [[ -z "$TARGET_AWS_REGION" && "$TARGET_HOST" == *".es.amazonaws.com"* ]]; then
+  host_part=${TARGET_HOST#*://}
+  host_part=${host_part%%/*}
+  if [[ "$host_part" =~ \.([a-z0-9-]+)\.es\.amazonaws\.com ]]; then
+    TARGET_AWS_REGION="${BASH_REMATCH[1]}"
+  fi
+fi
 
 ARGS=(
   --snapshot-name "$SNAPSHOT_NAME"
@@ -114,6 +136,14 @@ fi
 # Set a longer initial lease by default (30 minutes) unless overridden
 ARGS+=( --initial-lease-duration "$INITIAL_LEASE_DURATION" )
 
+# Add SigV4 flags if provided/inferred
+if [[ -n "$TARGET_AWS_REGION" ]]; then
+  ARGS+=( --target-aws-region "$TARGET_AWS_REGION" )
+fi
+if [[ -n "$TARGET_AWS_SERVICE_SIGNING_NAME" ]]; then
+  ARGS+=( --target-aws-service-signing-name "$TARGET_AWS_SERVICE_SIGNING_NAME" )
+fi
+
 # Redacted echo
 SAFE_ARGS=("${ARGS[@]}")
 for i in "${!SAFE_ARGS[@]}"; do
@@ -121,6 +151,8 @@ for i in "${!SAFE_ARGS[@]}"; do
     SAFE_ARGS[$((i+1))]="******"
   fi
 done
+
+echo "Running RFS (native) with args: ${SAFE_ARGS[*]}"
 
 # Prepare Metadata Migration args (prepend the 'migrate' subcommand)
 META_ARGS=(
@@ -135,6 +167,13 @@ META_ARGS=(
 if [[ "$TARGET_INSECURE" == true ]]; then
   META_ARGS+=( --target-insecure )
 fi
+# Add SigV4 flags if provided/inferred
+if [[ -n "$TARGET_AWS_REGION" ]]; then
+  META_ARGS+=( --target-aws-region "$TARGET_AWS_REGION" )
+fi
+if [[ -n "$TARGET_AWS_SERVICE_SIGNING_NAME" ]]; then
+  META_ARGS+=( --target-aws-service-signing-name "$TARGET_AWS_SERVICE_SIGNING_NAME" )
+fi
 
 META_SAFE_ARGS=("${META_ARGS[@]}")
 for i in "${!META_SAFE_ARGS[@]}"; do
@@ -142,6 +181,7 @@ for i in "${!META_SAFE_ARGS[@]}"; do
     META_SAFE_ARGS[$((i+1))]="******"
   fi
 done
+
 echo "Running Metadata Migration with args: ${META_SAFE_ARGS[*]}"
 
 META_ARGS_ESCAPED=""
@@ -153,10 +193,8 @@ for a in "${META_ARGS[@]}"; do
     META_ARGS_ESCAPED+="$(shell_escape "$a")"
   fi
 done
-echo "Running RFS (native) with args: ${SAFE_ARGS[*]}"
 
 # Build escaped single-string for Gradle --args to preserve tokens
-shell_escape() { printf '%q' "$1"; }
 ARGS_ESCAPED=""
 for a in "${ARGS[@]}"; do
   if [[ -z "$ARGS_ESCAPED" ]]; then
