@@ -121,6 +121,63 @@ User guide documentation is available in the [OpenSearch Migration Assistant doc
 
 To deploy the solution on AWS, follow the steps outlined in [Migration Assistant for Amazon OpenSearch Service](https://aws.amazon.com/solutions/implementations/migration-assistant-for-amazon-opensearch-service/), specifically [deploying the solution](https://docs.aws.amazon.com/solutions/latest/migration-assistant-for-amazon-opensearch-service/deploy-the-solution.html).
 
+### Reindex-from-Snapshot: macOS one-shot runner
+
+Use the macOS-friendly wrapper to migrate documents from an Elasticsearch 7.9 snapshot stored in S3 into a target cluster using the Reindex-from-Snapshot worker. It runs the published Docker image and stores working files under your home directory to avoid macOS SIP-protected paths.
+
+Prerequisites:
+- Docker Desktop for macOS installed and running
+- AWS credentials in your shell (env vars or `~/.aws`), with access to the snapshot bucket/prefix
+- Target cluster endpoint and, if applicable, basic auth credentials
+
+Example:
+
+```bash
+chmod +x ./reindex-from-snapshot-macos.sh
+
+./reindex-from-snapshot-macos.sh \
+  --snapshot-name my-snapshot \
+  --s3-repo-uri s3://my-bucket/snapshots \
+  --s3-region us-east-1 \
+  --target-host https://my-domain.us-east-1.es.amazonaws.com \
+  --source-version "ES 7.9" \
+  --target-username admin \
+  --target-password '******' \
+  --index-allowlist 'index_a,index_b' \
+  --max-shard-size-bytes 85899345920 \
+  --target-insecure
+```
+
+Notes:
+- The script loops until the worker exits with code 3 (no work left).
+- Local working dirs are created at `$HOME/opensearch-rfs/{s3_files,lucene}`.
+- You may set `TARGET_USERNAME` and `TARGET_PASSWORD` as env vars instead of flags.
+- For SigV4 auth (Amazon OpenSearch Service), prefer the CDK deployment. This wrapper focuses on basic auth.
+
+### Reindex-from-Snapshot: macOS native (no Docker)
+
+Run the RFS CLI using Gradle and your local JDK.
+
+Example:
+
+```bash
+chmod +x ./reindex-from-snapshot-macos-native.sh
+
+./reindex-from-snapshot-macos-native.sh \
+  --snapshot-name my-snapshot \
+  --s3-repo-uri s3://my-bucket/snapshots \
+  --s3-region us-east-1 \
+  --target-host https://my-domain.us-east-1.es.amazonaws.com \
+  --source-version "ES 7.9" \
+  --target-username admin \
+  --target-password '******'
+```
+
+Notes:
+- Requires Java 17 available on PATH; Gradle compiles and runs the app.
+- Uses `$HOME/opensearch-rfs/{s3_files,lucene}` for working files.
+- Loops until RFS returns exit code 3 (no work left).
+
 
 ## Continuous Integration and Deployment
 We use a combination of GitHub actions and Jenkins so that we can publish releases on a weekly basis and allow users to provide attestation for migration tooling.
